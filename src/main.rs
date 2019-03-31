@@ -31,17 +31,11 @@ struct JEdit {
 }
 
 impl JEdit {
-    fn buffer_get(&self, x: usize, y: usize) -> Option<char> {
-        self.buffer[y].as_ref()?[x]
-    }
-
     fn move_cursor(&mut self, x: usize, y: usize) {
-        self.win.put_str(self.cursor_x + self.offset_x, self.cursor_y, self.buffer_get(self.cursor_x, self.cursor_y).unwrap_or(' ').to_string().as_str(), 0);
-
         self.cursor_x = x;
         self.cursor_y = y;
 
-        self.win.put_str(self.cursor_x + self.offset_x, self.cursor_y, "|", 1);
+        self.redraw();
     }
 
     fn redraw_line(&mut self, y: usize) {
@@ -55,12 +49,19 @@ impl JEdit {
     }
 
     fn redraw(&mut self) {
-        for y in 0..self.height {
-            self.offset_x = format!("{}", self.height - 1).len(); // good logarithm
-            self.win.put_str(0, y, pad_zero(format!("{}", y), self.offset_x).as_str(), 1);
-            self.offset_x += 1;
+        let end = cmp::min(self.height, self.buffer.len());
+        let line_range = 0..end;
 
-            self.redraw_line(y);
+        for y in 0..self.height {
+            self.win.put_str(0, y, " ".repeat(self.width).as_str(), 0);
+            
+            if line_range.contains(&y) {
+                self.offset_x = format!("{}", end - 1).len(); // good logarithm
+                self.win.put_str(0, y, pad_zero(format!("{}", y), self.offset_x).as_str(), 1);
+                self.offset_x += 1;
+
+                self.redraw_line(y);
+            }
         }
 
         self.win.put_str(self.cursor_x + self.offset_x, self.cursor_y, "|", 1);
@@ -76,7 +77,6 @@ impl JEdit {
 
                     self.redraw();
                 },
-
                 // key events
                 Some(Event::Key(Code::Showable(string))) => {
                     for chr in string.chars() {
@@ -89,10 +89,6 @@ impl JEdit {
                                     new_line.push(line.remove(self.cursor_x));
                                 }
                                 self.buffer.insert(self.cursor_y + 1, new_line);
-                                // update the lower lines
-                                for y in 0..self.height {
-                                    self.redraw_line(y);
-                                }
                                 self.move_cursor(0, self.cursor_y + 1);
                             },
                             _ => {
@@ -101,30 +97,43 @@ impl JEdit {
                                     *line_maybe = Some(JVec::new());
                                 }
                                 let line = line_maybe.as_mut().unwrap();
-                                let shifted = line.insert(self.cursor_x, chr);
-                                if shifted {
-                                    self.redraw_line(self.cursor_y);
-                                } else {
-                                    self.win.put_str(self.cursor_x + self.offset_x, self.cursor_y, string, 0);
-                                }
+                                line.insert(self.cursor_x, chr);
                                 self.move_cursor(self.cursor_x + 1, self.cursor_y);
                             }
                         }
                     }
+
+                    self.redraw();
                 },
 
                 // special key
                 Some(Event::Key(Code::Backspace)) => {
                     if self.cursor_x == 0 {
                         if self.cursor_y != 0 {
-                            self.buffer.remove(self.cursor_y);
                             self.move_cursor(self.buffer[self.cursor_y - 1].as_ref().unwrap_or(&JVec::new()).len(), self.cursor_y - 1);
+
+                            let line_maybe = self.buffer.remove(self.cursor_y + 1);
+                            let new_line_maybe = &mut self.buffer[self.cursor_y];
+
+                            if new_line_maybe.is_none() || line_maybe.is_none() {
+                                self.redraw();
+                                continue;
+                            }
+                            let new_line = new_line_maybe.as_mut().unwrap();
+                            let line = line_maybe.unwrap();
+                            for chr_maybe in line {
+                                if chr_maybe.is_some() {
+                                    let chr = chr_maybe.unwrap();
+                                    new_line.push(Some(chr));
+                                }
+                            }
                         }
                     } else {
                         self.buffer[self.cursor_y].as_mut().unwrap().remove(self.cursor_x - 1);
-                        self.win.put_str(self.cursor_x + self.offset_x - 1, self.cursor_y, " ", 0);
                         self.move_cursor(self.cursor_x - 1, self.cursor_y);
                     }
+
+                    self.redraw();
                 },
 
                 // moving the cursor with arrow keys
